@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MNIST — Neural Digit Reader</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #080808;
+    --surface: #111111;
+    --border: #222222;
+    --accent: #4F8EF7;
+    --accent-dim: rgba(79,142,247,0.12);
+    --text: #F0F0F0;
+    --muted: #555;
+    --success: #3DD68C;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    overflow-x: hidden;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(79,142,247,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,142,247,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 900px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 0.2rem 0.7rem;
+    border-radius: 2px;
+    letter-spacing: 0.1em;
+    margin-bottom: 1rem;
+    opacity: 0;
+    animation: fadeUp 0.6s forwards 0.1s;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    opacity: 0;
+    animation: fadeUp 0.6s forwards 0.2s;
+  }
+
+  h1 span { color: var(--accent); }
+
+  .subtitle {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 0.75rem;
+    opacity: 0;
+    animation: fadeUp 0.6s forwards 0.3s;
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    opacity: 0;
+    animation: fadeUp 0.6s forwards 0.4s;
+  }
+
+  @media (max-width: 640px) {
+    .main-grid { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5rem;
+  }
+
+  .panel-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  /* Canvas */
+  .canvas-wrap {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  #canvas {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    cursor: crosshair;
+    touch-action: none;
+    transition: border-color 0.2s;
+    width: 100%;
+    max-width: 300px;
+    aspect-ratio: 1;
+  }
+
+  #canvas:hover { border-color: var(--accent); }
+
+  .canvas-actions {
+    display: flex;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 300px;
+  }
+
+  button {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+    padding: 0.6rem 1.2rem;
+    transition: all 0.15s;
+  }
+
+  .btn-predict {
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+    flex: 1;
+  }
+
+  .btn-predict:hover { background: #6aa3ff; transform: translateY(-1px); }
+  .btn-predict:active { transform: translateY(0); }
+  .btn-predict:disabled { background: #1e3a6e; color: #2a4f96; cursor: not-allowed; transform: none; }
+
+  .btn-clear {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .btn-clear:hover { border-color: #444; color: var(--text); }
+
+  /* Result panel */
+  .result-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .prediction-display {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  .digit-box {
+    width: 80px;
+    height: 80px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+    font-weight: 800;
+    color: var(--accent);
+    background: var(--accent-dim);
+    transition: all 0.3s;
+    flex-shrink: 0;
+  }
+
+  .digit-box.pulse {
+    animation: pulse 0.4s ease;
+  }
+
+  .prediction-meta { flex: 1; }
+
+  .confidence-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    margin-bottom: 0.3rem;
+  }
+
+  .confidence-value {
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: var(--success);
+    line-height: 1;
+  }
+
+  .confidence-bar-wrap {
+    margin-top: 0.5rem;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .confidence-bar {
+    height: 100%;
+    background: var(--success);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.5s ease;
+  }
+
+  /* Probabilities */
+  .probs-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    margin-bottom: 0.75rem;
+  }
+
+  .probs-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.4rem;
+  }
+
+  .prob-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+  }
+
+  .prob-bar-wrap {
+    width: 100%;
+    height: 40px;
+    background: var(--border);
+    border-radius: 2px;
+    display: flex;
+    align-items: flex-end;
+    overflow: hidden;
+  }
+
+  .prob-bar {
+    width: 100%;
+    background: var(--accent);
+    opacity: 0.3;
+    transition: height 0.4s ease, opacity 0.3s;
+    height: 0%;
+  }
+
+  .prob-bar.active {
+    opacity: 1;
+    background: var(--accent);
+  }
+
+  .prob-digit {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+  }
+
+  .prob-val {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.55rem;
+    color: var(--muted);
+  }
+
+  /* Empty state */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 0.5rem;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .empty-icon {
+    font-size: 2rem;
+    opacity: 0.3;
+  }
+
+  .empty-text {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    line-height: 1.6;
+  }
+
+  /* Loading */
+  .loading {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: var(--accent);
+  }
+
+  .loading.active { display: flex; }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--accent-dim);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  /* Error */
+  .error-msg {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    color: #ff6b6b;
+    background: rgba(255,107,107,0.08);
+    border: 1px solid rgba(255,107,107,0.2);
+    padding: 0.6rem 0.8rem;
+    border-radius: 2px;
+    display: none;
+  }
+
+  .error-msg.active { display: block; }
+
+  /* Footer */
+  footer {
+    text-align: center;
+    margin-top: 2rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--muted);
+    opacity: 0;
+    animation: fadeUp 0.6s forwards 0.6s;
+  }
+
+  footer span { color: var(--accent); }
+
+  /* Animations */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes pulse {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.15); }
+    100% { transform: scale(1); }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="tag">MLP · PyTorch · MNIST</div>
+    <h1>Neural <span>Digit</span> Reader</h1>
+    <p class="subtitle">784 → 128 → 64 → 10 &nbsp;|&nbsp; Trained on 60,000 samples</p>
+  </header>
+
+  <div class="main-grid">
+    <!-- Drawing Panel -->
+    <div class="panel">
+      <div class="panel-label">01 — Draw a digit</div>
+      <div class="canvas-wrap">
+        <canvas id="canvas" width="280" height="280"></canvas>
+        <div class="canvas-actions">
+          <button class="btn-predict" id="predictBtn" onclick="predict()">Predict →</button>
+          <button class="btn-clear" onclick="clearCanvas()">Clear</button>
+        </div>
+        <div class="loading" id="loading">
+          <div class="spinner"></div>
+          Running inference...
+        </div>
+        <div class="error-msg" id="errorMsg"></div>
+      </div>
+    </div>
+
+    <!-- Result Panel -->
+    <div class="panel result-panel">
+      <div class="panel-label">02 — Prediction</div>
+
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">✏️</div>
+        <div class="empty-text">Draw a digit (0–9)<br>then click Predict</div>
+      </div>
+
+      <div id="resultContent" style="display:none; display:flex; flex-direction:column; gap:1.5rem;">
+        <div class="prediction-display">
+          <div class="digit-box" id="digitBox">—</div>
+          <div class="prediction-meta">
+            <div class="confidence-label">CONFIDENCE</div>
+            <div class="confidence-value" id="confidenceVal">—</div>
+            <div class="confidence-bar-wrap">
+              <div class="confidence-bar" id="confidenceBar"></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="probs-label">ALL PROBABILITIES</div>
+          <div class="probs-grid" id="probsGrid"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <footer>Built with PyTorch · <span>Revica</span> · Model accuracy ~98%</footer>
+</div>
+
+<script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let hasDrawing = false;
+
+  // Init canvas
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 280, 280);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 18;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // Build probs grid
+  const grid = document.getElementById('probsGrid');
+  for (let i = 0; i < 10; i++) {
+    grid.innerHTML += `
+      <div class="prob-item">
+        <div class="prob-bar-wrap">
+          <div class="prob-bar" id="bar${i}"></div>
+        </div>
+        <div class="prob-digit">${i}</div>
+        <div class="prob-val" id="val${i}">0%</div>
+      </div>`;
+  }
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    if (e.touches) {
+      return {
+        x: (e.touches[0].clientX - rect.left) * scaleX,
+        y: (e.touches[0].clientY - rect.top) * scaleY
+      };
+    }
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }
+
+  canvas.addEventListener('mousedown', e => { drawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); });
+  canvas.addEventListener('mousemove', e => { if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasDrawing = true; });
+  canvas.addEventListener('mouseup', () => drawing = false);
+  canvas.addEventListener('mouseleave', () => drawing = false);
+
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; ctx.beginPath(); const p = getPos(e); ctx.moveTo(p.x, p.y); });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasDrawing = true; });
+  canvas.addEventListener('touchend', () => drawing = false);
+
+  function clearCanvas() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 280, 280);
+    hasDrawing = false;
+    document.getElementById('emptyState').style.display = 'flex';
+    document.getElementById('resultContent').style.display = 'none';
+    document.getElementById('errorMsg').classList.remove('active');
+  }
+
+  async function predict() {
+    if (!hasDrawing) return;
+
+    const btn = document.getElementById('predictBtn');
+    const loading = document.getElementById('loading');
+    const errorMsg = document.getElementById('errorMsg');
+
+    btn.disabled = true;
+    loading.classList.add('active');
+    errorMsg.classList.remove('active');
+
+    try {
+      const imageData = canvas.toDataURL('image/png');
+      const res = await fetch('http://localhost:5000/predict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageData })
+      });
+
+      if (!res.ok) throw new Error('Server error');
+      const data = await res.json();
+
+      // Show result
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('resultContent').style.display = 'flex';
+
+      const digitBox = document.getElementById('digitBox');
+      digitBox.textContent = data.prediction;
+      digitBox.classList.remove('pulse');
+      void digitBox.offsetWidth;
+      digitBox.classList.add('pulse');
+
+      document.getElementById('confidenceVal').textContent = `${data.confidence}%`;
+      document.getElementById('confidenceBar').style.width = `${data.confidence}%`;
+
+      // Update bars
+      data.probabilities.forEach((p, i) => {
+        const bar = document.getElementById(`bar${i}`);
+        const val = document.getElementById(`val${i}`);
+        bar.style.height = `${Math.max(p, 2)}%`;
+        bar.classList.toggle('active', i === data.prediction);
+        val.textContent = `${p}%`;
+      });
+
+    } catch (err) {
+      errorMsg.textContent = '⚠ Could not connect to API. Make sure api.py is running on port 5000.';
+      errorMsg.classList.add('active');
+    } finally {
+      btn.disabled = false;
+      loading.classList.remove('active');
+    }
+  }
+</script>
+</body>
+</html>
