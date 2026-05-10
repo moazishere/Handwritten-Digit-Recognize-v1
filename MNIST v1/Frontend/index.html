@@ -524,7 +524,7 @@
 
     try {
       const imageData = canvas.toDataURL('image/png');
-      const res = await fetch('http://localhost:5000/predict', {
+      const res = await fetch('https://mnist-api-ycmj.onrender.com', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageData })
